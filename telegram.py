@@ -52,8 +52,16 @@ router = Router()
 
 # ================= ВСПОМОГАТЕЛЬНОЕ =================
 def build_post_text(data: dict) -> str:
+    # Здесь возвращаем фон и узор
+    model = data.get('model', 'Не указано')
+    bg = data.get('background', 'Не указано')
+    pattern = data.get('pattern', 'Не указано')
+
     return (
-        f"🎁 <a href=\"{data['nft_link']}\">{data['nft_name']}</a>\n\n"
+        f"🎁 <a href=\"{data['nft_link']}\">{data['nft_name']}</a>\n"
+        f"Модель: {model}\n"
+        f"Фон: {bg}\n"
+        f"Узор: {pattern}\n\n"
         f"💵 Цена: {data['price']}\n"
         f"👤 Владелец: {data['owner']}\n"
         f"💰 Валюта: {CURRENCIES[data['currency']]}\n\n"
@@ -62,7 +70,6 @@ def build_post_text(data: dict) -> str:
 
 
 def get_channel_keyboard():
-    """Кнопка, которая будет висеть под постом в канале"""
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="🛍 Создать лот", url=BOT_LINK)]
     ])
@@ -116,7 +123,7 @@ async def start_selling_callback(call: CallbackQuery, state: FSMContext):
     await call.answer()
 
 
-# ================= ССЫЛКА + ПАРСИНГ =================
+# ================= ССЫЛКА =================
 @router.message(Form.nft_link)
 async def process_link(message: Message, state: FSMContext):
     if not message.text:
@@ -136,13 +143,16 @@ async def process_link(message: Message, state: FSMContext):
             return
 
         nft_name = raw_name.replace("-", " #")
-
         owner = f"@{message.from_user.username}" if message.from_user.username else message.from_user.first_name
 
+        # Сохраняем все данные, включая заглушки
         await state.update_data(
             nft_link=url,
             nft_name=nft_name,
-            owner=owner
+            owner=owner,
+            model="Не указано",
+            background="Не указано",
+            pattern="Не указано"
         )
 
         kb = InlineKeyboardMarkup(inline_keyboard=[
@@ -200,12 +210,18 @@ async def process_price(message: Message, state: FSMContext):
         return
 
     await state.update_data(price=formatted_price)
+    # Принудительно закрепляем состояние, чтобы данные не стерлись
+    await state.set_state(Form.choose_type)
 
     data = await state.get_data()
 
+    # Возвращаем фон и узор в предпросмотр
     preview = (
         f"Проверь лот:\n\n"
-        f"🎁 {data['nft_name']} ({data['nft_link']})\n\n"
+        f"🎁 {data['nft_name']} ({data['nft_link']})\n"
+        f"Модель: {data.get('model', 'Не указано')}\n"
+        f"Фон: {data.get('background', 'Не указано')}\n"
+        f"Узор: {data.get('pattern', 'Не указано')}\n\n"
         f"💵 Цена: {data['price']}\n"
         f"👤 Владелец: {data['owner']}\n"
         f"💰 Валюта: {CURRENCIES[data['currency']]}"
@@ -216,7 +232,6 @@ async def process_price(message: Message, state: FSMContext):
         [InlineKeyboardButton(text="❌ Отмена", callback_data="cancel")]
     ])
     await message.answer(preview, reply_markup=kb)
-    await state.set_state(Form.choose_type)
 
 
 # ================= ВЫБОР ТИПА =================
@@ -227,12 +242,15 @@ async def choose_post_type(call: CallbackQuery, state: FSMContext):
         [InlineKeyboardButton(text=f"⭐ VIP ({VIP_PRICE_STARS} Stars)", callback_data="type:vip")]
     ])
     await call.message.edit_text("Как опубликовать?", reply_markup=kb)
+    # Оставляем состояние, чтобы данные не потерялись
+    await state.set_state(Form.choose_type)
     await call.answer()
 
 
 # ================= ПУБЛИКАЦИЯ (ОБЫЧНЫЙ) =================
 @router.callback_query(F.data == "type:regular")
 async def publish_regular(call: CallbackQuery, state: FSMContext, bot: Bot):
+    # Берем данные, если их нет - выдаем ошибку
     data = await state.get_data()
 
     if not data or 'nft_link' not in data:
@@ -243,7 +261,6 @@ async def publish_regular(call: CallbackQuery, state: FSMContext, bot: Bot):
 
     try:
         await unpin_all(bot)
-        # Отправляем пост с кнопкой "Создать лот"
         await bot.send_message(
             chat_id=CHANNEL_ID,
             text=build_post_text(data),
@@ -266,7 +283,9 @@ async def send_vip_invoice(call: CallbackQuery, state: FSMContext, bot: Bot):
         await call.message.edit_text("❌ Данные потеряны. Начни заново: /start")
         return
 
+    # Сохраняем флаг, что это VIP
     await state.update_data(is_vip=True)
+
     prices = [LabeledPrice(label="VIP", amount=VIP_PRICE_STARS)]
     try:
         await bot.send_invoice(
@@ -293,18 +312,14 @@ async def pre_checkout(query: PreCheckoutQuery):
 @router.message(F.successful_payment)
 async def on_vip_paid(message: Message, state: FSMContext, bot: Bot):
     data = await state.get_data()
-    if not data.get("is_vip"):
-        return
 
-    if not data or 'nft_link' not in data:
-        await message.answer("❌ Данные потеряны. Начни заново: /start")
+    if not data or not data.get("is_vip"):
         return
 
     user_cooldowns[message.from_user.id] = time.time()
 
     try:
         await unpin_all(bot)
-        # Отправляем VIP-пост с кнопкой "Создать лот"
         sent = await bot.send_message(
             chat_id=CHANNEL_ID,
             text=build_post_text(data),
