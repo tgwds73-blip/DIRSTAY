@@ -38,7 +38,7 @@ COOLDOWN_TIME = 300  # 5 минут
 # ================= СОСТОЯНИЯ =================
 class Form(StatesGroup):
     nft_link = State()
-    contact = State()  # <--- НОВЫЙ ШАГ
+    contact = State()
     price = State()
     currency = State()
     choose_type = State()
@@ -52,7 +52,7 @@ def build_post_text(data: dict) -> str:
     return (
         f"🎁 <a href=\"{data['nft_link']}\">{data['nft_name']}</a>\n\n"
         f"💵 Цена: {data['price']}\n"
-        f"👤 Владелец: {data['contact']}\n"  # <--- ТУТ ТЕПЕРЬ КОНТАКТ
+        f"👤 Владелец: {data['contact']}\n"
         f"💰 Валюта: {CURRENCIES[data['currency']]}\n\n"
         f"<b><i>⚠️ Бот не отвечает за людей и ваши сделки, советуем не передавать NFT первым, и идти через настоящий оффер.</i></b>"
     )
@@ -114,11 +114,10 @@ async def process_link(message: Message, state: FSMContext):
         await message.answer("❌ Отправь текстовую ссылку.")
         return
 
-    # Очищаем от пробелов
-    url = message.text.strip()
+    raw_text = message.text.strip()
+    url = raw_text
 
-    # Если Telegram сделал превью, настоящая ссылка может быть скрыта.
-    # Достаем её через entities (скрытые ссылки в тексте)
+    # 1. Если Telegram сделал превью (скрыл ссылку), достаем её из entities
     if message.entities:
         for entity in message.entities:
             if entity.type == "url":
@@ -128,28 +127,38 @@ async def process_link(message: Message, state: FSMContext):
                 url = entity.url
                 break
 
-    # Делаем проверку более гибкой (разрешаем http и https, и без них)
-    # Приводим к стандартному виду
-    clean_url = url.replace("http://", "").replace("https://", "")
+    # 2. Очищаем ссылку от мусора (http, https, пробелы, спецсимволы)
+    url = url.strip().lower()
+    url = url.replace("http://", "").replace("https://", "")
 
-    if not clean_url.startswith("t.me/nft/"):
+    # Убираем всё после знака вопроса, если он есть (чтобы не мешал)
+    if "?" in url:
+        url = url.split("?")[0]
+
+    # Если в ссылке есть t.me/nft/ значит она правильная
+    if "t.me/nft/" not in url:
         await message.answer("❌ Неверный формат. Ссылка должна вести на NFT (например, t.me/nft/...):")
         return
 
-    # Восстанавливаем нормальную ссылку для поста
-    final_link = "https://" + clean_url
+    # 3. Вытаскиваем название (всё, что после t.me/nft/)
+    try:
+        raw_name = url.split("t.me/nft/")[1].strip("/")
+    except IndexError:
+        await message.answer("❌ Не удалось распознать NFT. Ссылка пустая.")
+        return
 
-    # Вытаскиваем название
-    raw_name = clean_url.split("/")[-1]
     if not raw_name:
         await message.answer("❌ Не удалось распознать NFT. Ссылка пустая.")
         return
 
+    # Восстанавливаем красивую ссылку для поста
+    final_link = f"https://t.me/nft/{raw_name}"
+
+    # Делаем красивое название (RestlessJar-47693 -> RestlessJar #47693)
     nft_name = raw_name.replace("-", " #")
 
     await state.update_data(nft_link=final_link, nft_name=nft_name)
 
-    # Спрашиваем контакт
     await message.answer("Введи контакт владельца (например, @username):")
     await state.set_state(Form.contact)
 
@@ -164,7 +173,6 @@ async def process_contact(message: Message, state: FSMContext):
     contact = message.text.strip()
     await state.update_data(contact=contact)
 
-    # Переходим к выбору валюты
     kb = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="GRAM", callback_data="cur:gram"),
          InlineKeyboardButton(text="Stars", callback_data="cur:stars")],
@@ -223,7 +231,7 @@ async def process_price(message: Message, state: FSMContext):
         f"Проверь лот:\n\n"
         f"🎁 {data['nft_name']} ({data['nft_link']})\n\n"
         f"💵 Цена: {data['price']}\n"
-        f"👤 Владелец: {data['contact']}\n"  # <--- ТУТ ТОЖЕ
+        f"👤 Владелец: {data['contact']}\n"
         f"💰 Валюта: {CURRENCIES[data['currency']]}"
     )
 
