@@ -20,7 +20,9 @@ WELCOME_MSG_ID = 4  # Номер сообщения с приветствием
 VIP_PRICE_STARS = 15  # Цена VIP
 ADMIN_ID = 7885915159  # Твой ID для уведомлений
 MAX_PRICE = 1000000.0  # Максимальная цена
-BOT_LINK = "https://t.me/dirstaybot"  # Ссылка на бота для кнопки в канале
+
+# Ссылка на твоего бота для кнопки в канале
+BOT_LINK = "https://t.me/dirstaybot"
 
 logging.basicConfig(level=logging.INFO)
 
@@ -40,11 +42,8 @@ COOLDOWN_TIME = 300  # 5 минут
 # ================= СОСТОЯНИЯ =================
 class Form(StatesGroup):
     nft_link = State()
-    model = State()  # Вернули
-    background = State()  # Вернули
-    pattern = State()  # Вернули
-    currency = State()
     price = State()
+    currency = State()
     choose_type = State()
 
 
@@ -53,11 +52,16 @@ router = Router()
 
 # ================= ВСПОМОГАТЕЛЬНОЕ =================
 def build_post_text(data: dict) -> str:
+    # Здесь возвращаем фон и узор
+    model = data.get('model', 'Не указано')
+    bg = data.get('background', 'Не указано')
+    pattern = data.get('pattern', 'Не указано')
+
     return (
         f"🎁 <a href=\"{data['nft_link']}\">{data['nft_name']}</a>\n"
-        f"Модель: {data['model']}\n"
-        f"Фон: {data['background']}\n"
-        f"Узор: {data['pattern']}\n\n"
+        f"Модель: {model}\n"
+        f"Фон: {bg}\n"
+        f"Узор: {pattern}\n\n"
         f"💵 Цена: {data['price']}\n"
         f"👤 Владелец: {data['owner']}\n"
         f"💰 Валюта: {CURRENCIES[data['currency']]}\n\n"
@@ -123,56 +127,48 @@ async def start_selling_callback(call: CallbackQuery, state: FSMContext):
 @router.message(Form.nft_link)
 async def process_link(message: Message, state: FSMContext):
     if not message.text:
-        await message.answer("❌ Отправь текстовую ссылку.")
+        await message.answer("❌ Пожалуйста, отправь текстовую ссылку.")
         return
 
     url = message.text.strip()
+
     if not re.match(r"^https://t\.me/nft/", url):
         await message.answer("❌ Неверный формат. Ссылка должна начинаться с https://t.me/nft/")
         return
 
-    raw_name = url.split("/")[-1]
-    nft_name = raw_name.replace("-", " #")
-    owner = f"@{message.from_user.username}" if message.from_user.username else message.from_user.first_name
+    try:
+        raw_name = url.split("/")[-1]
+        if not raw_name:
+            await message.answer("❌ Не удалось распознать NFT. Ссылка пустая.")
+            return
 
-    await state.update_data(nft_link=url, nft_name=nft_name, owner=owner)
+        nft_name = raw_name.replace("-", " #")
+        owner = f"@{message.from_user.username}" if message.from_user.username else message.from_user.first_name
 
-    await message.answer("Шаг 2: Введи **Модель** (например, Silver):")
-    await state.set_state(Form.model)
+        # Сохраняем все данные, включая заглушки
+        await state.update_data(
+            nft_link=url,
+            nft_name=nft_name,
+            owner=owner,
+            model="Не указано",
+            background="Не указано",
+            pattern="Не указано"
+        )
 
+        kb = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="GRAM", callback_data="cur:gram"),
+             InlineKeyboardButton(text="Stars", callback_data="cur:stars")],
+            [InlineKeyboardButton(text="RUB", callback_data="cur:rub"),
+             InlineKeyboardButton(text="USDT", callback_data="cur:usdt")],
+            [InlineKeyboardButton(text="UAH", callback_data="cur:uah"),
+             InlineKeyboardButton(text="KZT", callback_data="cur:kzt")],
+        ])
+        await message.answer("Выбери валюту:", reply_markup=kb)
+        await state.set_state(Form.currency)
 
-# ================= МОДЕЛЬ =================
-@router.message(Form.model)
-async def process_model(message: Message, state: FSMContext):
-    await state.update_data(model=message.text.strip())
-    await message.answer("Шаг 3: Введи **Фон** (например, Shamrock Green):")
-    await state.set_state(Form.background)
-
-
-# ================= ФОН =================
-@router.message(Form.background)
-async def process_background(message: Message, state: FSMContext):
-    await state.update_data(background=message.text.strip())
-    await message.answer("Шаг 4: Введи **Узор** (например, Paw):")
-    await state.set_state(Form.pattern)
-
-
-# ================= УЗОР =================
-@router.message(Form.pattern)
-async def process_pattern(message: Message, state: FSMContext):
-    await state.update_data(pattern=message.text.strip())
-
-    # Переходим к выбору валюты
-    kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="GRAM", callback_data="cur:gram"),
-         InlineKeyboardButton(text="Stars", callback_data="cur:stars")],
-        [InlineKeyboardButton(text="RUB", callback_data="cur:rub"),
-         InlineKeyboardButton(text="USDT", callback_data="cur:usdt")],
-        [InlineKeyboardButton(text="UAH", callback_data="cur:uah"),
-         InlineKeyboardButton(text="KZT", callback_data="cur:kzt")],
-    ])
-    await message.answer("Выбери валюту:", reply_markup=kb)
-    await state.set_state(Form.currency)
+    except Exception as e:
+        await message.answer(f"❌ Ошибка обработки ссылки. Попробуй еще раз.")
+        print(f"Ошибка парсинга: {e}")
 
 
 # ================= ВАЛЮТА =================
@@ -192,29 +188,40 @@ async def process_currency(call: CallbackQuery, state: FSMContext):
 # ================= ЦЕНА =================
 @router.message(Form.price)
 async def process_price(message: Message, state: FSMContext):
+    if not message.text:
+        await message.answer("❌ Введи число текстом.")
+        return
+
     try:
         price_text = message.text.replace(",", ".").strip()
         price = float(price_text)
 
-        if price <= 0 or price > MAX_PRICE:
-            await message.answer(f"❌ Цена должна быть от 1 до {MAX_PRICE}.")
+        if price <= 0:
+            await message.answer("❌ Цена должна быть больше нуля.")
+            return
+        if price > MAX_PRICE:
+            await message.answer(f"❌ Максимальная цена — {MAX_PRICE}. Введи число поменьше.")
             return
 
         formatted_price = int(price) if price.is_integer() else round(price, 2)
+
     except ValueError:
         await message.answer("❌ Введи только число (например 19.99).")
         return
 
     await state.update_data(price=formatted_price)
+    # Принудительно закрепляем состояние, чтобы данные не стерлись
+    await state.set_state(Form.choose_type)
 
     data = await state.get_data()
 
+    # Возвращаем фон и узор в предпросмотр
     preview = (
         f"Проверь лот:\n\n"
         f"🎁 {data['nft_name']} ({data['nft_link']})\n"
-        f"Модель: {data['model']}\n"
-        f"Фон: {data['background']}\n"
-        f"Узор: {data['pattern']}\n\n"
+        f"Модель: {data.get('model', 'Не указано')}\n"
+        f"Фон: {data.get('background', 'Не указано')}\n"
+        f"Узор: {data.get('pattern', 'Не указано')}\n\n"
         f"💵 Цена: {data['price']}\n"
         f"👤 Владелец: {data['owner']}\n"
         f"💰 Валюта: {CURRENCIES[data['currency']]}"
@@ -225,7 +232,6 @@ async def process_price(message: Message, state: FSMContext):
         [InlineKeyboardButton(text="❌ Отмена", callback_data="cancel")]
     ])
     await message.answer(preview, reply_markup=kb)
-    await state.set_state(Form.choose_type)
 
 
 # ================= ВЫБОР ТИПА =================
@@ -236,12 +242,15 @@ async def choose_post_type(call: CallbackQuery, state: FSMContext):
         [InlineKeyboardButton(text=f"⭐ VIP ({VIP_PRICE_STARS} Stars)", callback_data="type:vip")]
     ])
     await call.message.edit_text("Как опубликовать?", reply_markup=kb)
+    # Оставляем состояние, чтобы данные не потерялись
+    await state.set_state(Form.choose_type)
     await call.answer()
 
 
 # ================= ПУБЛИКАЦИЯ (ОБЫЧНЫЙ) =================
 @router.callback_query(F.data == "type:regular")
 async def publish_regular(call: CallbackQuery, state: FSMContext, bot: Bot):
+    # Берем данные, если их нет - выдаем ошибку
     data = await state.get_data()
 
     if not data or 'nft_link' not in data:
@@ -274,6 +283,7 @@ async def send_vip_invoice(call: CallbackQuery, state: FSMContext, bot: Bot):
         await call.message.edit_text("❌ Данные потеряны. Начни заново: /start")
         return
 
+    # Сохраняем флаг, что это VIP
     await state.update_data(is_vip=True)
 
     prices = [LabeledPrice(label="VIP", amount=VIP_PRICE_STARS)]
@@ -329,6 +339,7 @@ async def on_vip_paid(message: Message, state: FSMContext, bot: Bot):
             await bot.send_message(ADMIN_ID, admin_text, parse_mode="HTML")
         except:
             pass
+
     except Exception as e:
         await message.answer(f"❌ Оплата прошла, но ошибка публикации: {e}")
     await state.clear()
