@@ -1,6 +1,5 @@
 import asyncio
 import logging
-import re
 import time
 
 from aiogram import Bot, Dispatcher, Router, F
@@ -39,6 +38,7 @@ COOLDOWN_TIME = 300  # 5 минут
 # ================= СОСТОЯНИЯ =================
 class Form(StatesGroup):
     nft_link = State()
+    contact = State()  # <--- НОВЫЙ ШАГ
     price = State()
     currency = State()
     choose_type = State()
@@ -49,11 +49,10 @@ router = Router()
 
 # ================= ВСПОМОГАТЕЛЬНОЕ =================
 def build_post_text(data: dict) -> str:
-    # Убрали модель/фон/узор
     return (
         f"🎁 <a href=\"{data['nft_link']}\">{data['nft_name']}</a>\n\n"
         f"💵 Цена: {data['price']}\n"
-        f"👤 Владелец: {data['owner']}\n"
+        f"👤 Владелец: {data['contact']}\n"  # <--- ТУТ ТЕПЕРЬ КОНТАКТ
         f"💰 Валюта: {CURRENCIES[data['currency']]}\n\n"
         f"<b><i>⚠️ Бот не отвечает за людей и ваши сделки, советуем не передавать NFT первым, и идти через настоящий оффер.</i></b>"
     )
@@ -117,7 +116,6 @@ async def process_link(message: Message, state: FSMContext):
 
     url = message.text.strip()
 
-    # Быстрая проверка через startswith вместо медленного re.match
     if not url.startswith("https://t.me/nft/"):
         await message.answer("❌ Неверный формат. Ссылка должна начинаться с https://t.me/nft/")
         return
@@ -128,14 +126,25 @@ async def process_link(message: Message, state: FSMContext):
         return
 
     nft_name = raw_name.replace("-", " #")
-    owner = f"@{message.from_user.username}" if message.from_user.username else message.from_user.first_name
 
-    await state.update_data(
-        nft_link=url,
-        nft_name=nft_name,
-        owner=owner
-    )
+    await state.update_data(nft_link=url, nft_name=nft_name)
 
+    # Спрашиваем контакт
+    await message.answer("Введи контакт владельца (например, @username):")
+    await state.set_state(Form.contact)
+
+
+# ================= КОНТАКТ =================
+@router.message(Form.contact)
+async def process_contact(message: Message, state: FSMContext):
+    if not message.text:
+        await message.answer("❌ Напиши контакт текстом.")
+        return
+
+    contact = message.text.strip()
+    await state.update_data(contact=contact)
+
+    # Переходим к выбору валюты
     kb = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="GRAM", callback_data="cur:gram"),
          InlineKeyboardButton(text="Stars", callback_data="cur:stars")],
@@ -190,12 +199,11 @@ async def process_price(message: Message, state: FSMContext):
 
     data = await state.get_data()
 
-    # Убрали модель/фон/узор из предпросмотра
     preview = (
         f"Проверь лот:\n\n"
         f"🎁 {data['nft_name']} ({data['nft_link']})\n\n"
         f"💵 Цена: {data['price']}\n"
-        f"👤 Владелец: {data['owner']}\n"
+        f"👤 Владелец: {data['contact']}\n"  # <--- ТУТ ТОЖЕ
         f"💰 Валюта: {CURRENCIES[data['currency']]}"
     )
 
@@ -302,7 +310,7 @@ async def on_vip_paid(message: Message, state: FSMContext, bot: Bot):
 
         admin_text = (
             f"💸 <b>Оплачен VIP-пост!</b>\n\n"
-            f"Пользователь: {data['owner']} (ID: {message.from_user.id})\n"
+            f"Пользователь: {data['contact']} (ID: {message.from_user.id})\n"
             f"NFT: {data['nft_name']}\n"
             f"Цена: {data['price']} {CURRENCIES[data['currency']]}"
         )
