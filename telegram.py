@@ -21,9 +21,6 @@ VIP_PRICE_STARS = 15  # Цена VIP
 ADMIN_ID = 7885915159  # Твой ID для уведомлений
 MAX_PRICE = 1000000.0  # Максимальная цена
 
-# Ссылка на твоего бота для кнопки в канале
-BOT_LINK = "https://t.me/dirstaybot"
-
 logging.basicConfig(level=logging.INFO)
 
 CURRENCIES = {
@@ -52,27 +49,20 @@ router = Router()
 
 # ================= ВСПОМОГАТЕЛЬНОЕ =================
 def build_post_text(data: dict) -> str:
-    # Здесь возвращаем фон и узор
-    model = data.get('model', 'Не указано')
-    bg = data.get('background', 'Не указано')
-    pattern = data.get('pattern', 'Не указано')
+    model_info = data.get('model', 'Не указано')
+    bg_info = data.get('background', 'Не указано')
+    pattern_info = data.get('pattern', 'Не указано')
 
     return (
-        f"🎁 <a href=\"{data['nft_link']}\">{data['nft_name']}</a>\n"
-        f"Модель: {model}\n"
-        f"Фон: {bg}\n"
-        f"Узор: {pattern}\n\n"
+        f"🎁 <a href=\"{data['nft_link']}\">{data['nft_name']}</a>\n\n"
+        f"Модель: {model_info}\n"
+        f"Фон: {bg_info}\n"
+        f"Узор: {pattern_info}\n\n"
         f"💵 Цена: {data['price']}\n"
         f"👤 Владелец: {data['owner']}\n"
         f"💰 Валюта: {CURRENCIES[data['currency']]}\n\n"
-        f"<b><i>⚠️ Бот не отвечает за людей и ваши сделки, советуем не передавать NFT первым, и идти через настоящий оффер.</i></b>"
+        f"⚠️ <i>Бот не проверяет владение NFT. Все сделки на ваш страх и риск.</i>"
     )
-
-
-def get_channel_keyboard():
-    return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="🛍 Создать лот", url=BOT_LINK)]
-    ])
 
 
 async def unpin_all(bot: Bot):
@@ -123,29 +113,33 @@ async def start_selling_callback(call: CallbackQuery, state: FSMContext):
     await call.answer()
 
 
-# ================= ССЫЛКА =================
+# ================= ССЫЛКА + ПАРСИНГ =================
 @router.message(Form.nft_link)
 async def process_link(message: Message, state: FSMContext):
+    # 1. Проверяем, что это вообще текст (а не фото/стикер)
     if not message.text:
         await message.answer("❌ Пожалуйста, отправь текстовую ссылку.")
         return
 
     url = message.text.strip()
 
+    # 2. Проверяем строгий формат ссылки
     if not re.match(r"^https://t\.me/nft/", url):
         await message.answer("❌ Неверный формат. Ссылка должна начинаться с https://t.me/nft/")
         return
 
     try:
+        # 3. Вытаскиваем название
         raw_name = url.split("/")[-1]
         if not raw_name:
             await message.answer("❌ Не удалось распознать NFT. Ссылка пустая.")
             return
 
         nft_name = raw_name.replace("-", " #")
+
         owner = f"@{message.from_user.username}" if message.from_user.username else message.from_user.first_name
 
-        # Сохраняем все данные, включая заглушки
+        # Сохраняем все данные
         await state.update_data(
             nft_link=url,
             nft_name=nft_name,
@@ -167,6 +161,7 @@ async def process_link(message: Message, state: FSMContext):
         await state.set_state(Form.currency)
 
     except Exception as e:
+        # Если что-то пошло не так, бот не падает
         await message.answer(f"❌ Ошибка обработки ссылки. Попробуй еще раз.")
         print(f"Ошибка парсинга: {e}")
 
@@ -210,18 +205,15 @@ async def process_price(message: Message, state: FSMContext):
         return
 
     await state.update_data(price=formatted_price)
-    # Принудительно закрепляем состояние, чтобы данные не стерлись
-    await state.set_state(Form.choose_type)
 
     data = await state.get_data()
 
-    # Возвращаем фон и узор в предпросмотр
     preview = (
         f"Проверь лот:\n\n"
         f"🎁 {data['nft_name']} ({data['nft_link']})\n"
-        f"Модель: {data.get('model', 'Не указано')}\n"
-        f"Фон: {data.get('background', 'Не указано')}\n"
-        f"Узор: {data.get('pattern', 'Не указано')}\n\n"
+        f"Модель: {data['model']}\n"
+        f"Фон: {data['background']}\n"
+        f"Узор: {data['pattern']}\n\n"
         f"💵 Цена: {data['price']}\n"
         f"👤 Владелец: {data['owner']}\n"
         f"💰 Валюта: {CURRENCIES[data['currency']]}"
@@ -232,6 +224,7 @@ async def process_price(message: Message, state: FSMContext):
         [InlineKeyboardButton(text="❌ Отмена", callback_data="cancel")]
     ])
     await message.answer(preview, reply_markup=kb)
+    await state.set_state(Form.choose_type)
 
 
 # ================= ВЫБОР ТИПА =================
@@ -242,15 +235,12 @@ async def choose_post_type(call: CallbackQuery, state: FSMContext):
         [InlineKeyboardButton(text=f"⭐ VIP ({VIP_PRICE_STARS} Stars)", callback_data="type:vip")]
     ])
     await call.message.edit_text("Как опубликовать?", reply_markup=kb)
-    # Оставляем состояние, чтобы данные не потерялись
-    await state.set_state(Form.choose_type)
     await call.answer()
 
 
 # ================= ПУБЛИКАЦИЯ (ОБЫЧНЫЙ) =================
 @router.callback_query(F.data == "type:regular")
 async def publish_regular(call: CallbackQuery, state: FSMContext, bot: Bot):
-    # Берем данные, если их нет - выдаем ошибку
     data = await state.get_data()
 
     if not data or 'nft_link' not in data:
@@ -261,12 +251,7 @@ async def publish_regular(call: CallbackQuery, state: FSMContext, bot: Bot):
 
     try:
         await unpin_all(bot)
-        await bot.send_message(
-            chat_id=CHANNEL_ID,
-            text=build_post_text(data),
-            parse_mode="HTML",
-            reply_markup=get_channel_keyboard()
-        )
+        await bot.send_message(chat_id=CHANNEL_ID, text=build_post_text(data), parse_mode="HTML")
         await call.message.edit_text("✅ Опубликовано.")
     except Exception as e:
         await call.message.edit_text(f"❌ Ошибка: {e}")
@@ -283,9 +268,7 @@ async def send_vip_invoice(call: CallbackQuery, state: FSMContext, bot: Bot):
         await call.message.edit_text("❌ Данные потеряны. Начни заново: /start")
         return
 
-    # Сохраняем флаг, что это VIP
     await state.update_data(is_vip=True)
-
     prices = [LabeledPrice(label="VIP", amount=VIP_PRICE_STARS)]
     try:
         await bot.send_invoice(
@@ -312,20 +295,18 @@ async def pre_checkout(query: PreCheckoutQuery):
 @router.message(F.successful_payment)
 async def on_vip_paid(message: Message, state: FSMContext, bot: Bot):
     data = await state.get_data()
+    if not data.get("is_vip"):
+        return
 
-    if not data or not data.get("is_vip"):
+    if not data or 'nft_link' not in data:
+        await message.answer("❌ Данные потеряны. Начни заново: /start")
         return
 
     user_cooldowns[message.from_user.id] = time.time()
 
     try:
         await unpin_all(bot)
-        sent = await bot.send_message(
-            chat_id=CHANNEL_ID,
-            text=build_post_text(data),
-            parse_mode="HTML",
-            reply_markup=get_channel_keyboard()
-        )
+        sent = await bot.send_message(chat_id=CHANNEL_ID, text=build_post_text(data), parse_mode="HTML")
         await bot.pin_chat_message(chat_id=CHANNEL_ID, message_id=sent.message_id, disable_notification=True)
         await message.answer("✅ VIP-пост опубликован и закреплен!")
 
