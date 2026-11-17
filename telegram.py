@@ -12,7 +12,7 @@ from aiogram.types import (
 )
 
 # ================= НАСТРОЙКИ =================
-BOT_TOKEN = "ТВОЙ_ТОКЕН_ЗДЕСЬ"        # <-- ВСТАВЬ СВОЙ ТОКЕН
+BOT_TOKEN = "9248543530:AAGEhtoCP9UP1eS5TVHjZd4jrc2Dvc1TT8Y"        # <-- ВСТАВЬ СВОЙ ТОКЕН
 CHANNEL_ID = -1004438414275            # <-- ID твоего канала
 VIP_PRICE_STARS = 15                   # Цена VIP-поста
 
