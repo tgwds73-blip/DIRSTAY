@@ -114,20 +114,40 @@ async def process_link(message: Message, state: FSMContext):
         await message.answer("❌ Отправь текстовую ссылку.")
         return
 
+    # Очищаем от пробелов
     url = message.text.strip()
 
-    if not url.startswith("https://t.me/nft/"):
-        await message.answer("❌ Неверный формат. Ссылка должна начинаться с https://t.me/nft/")
+    # Если Telegram сделал превью, настоящая ссылка может быть скрыта.
+    # Достаем её через entities (скрытые ссылки в тексте)
+    if message.entities:
+        for entity in message.entities:
+            if entity.type == "url":
+                url = entity.extract_from(message.text)
+                break
+            elif entity.type == "text_link":
+                url = entity.url
+                break
+
+    # Делаем проверку более гибкой (разрешаем http и https, и без них)
+    # Приводим к стандартному виду
+    clean_url = url.replace("http://", "").replace("https://", "")
+
+    if not clean_url.startswith("t.me/nft/"):
+        await message.answer("❌ Неверный формат. Ссылка должна вести на NFT (например, t.me/nft/...):")
         return
 
-    raw_name = url.split("/")[-1]
+    # Восстанавливаем нормальную ссылку для поста
+    final_link = "https://" + clean_url
+
+    # Вытаскиваем название
+    raw_name = clean_url.split("/")[-1]
     if not raw_name:
         await message.answer("❌ Не удалось распознать NFT. Ссылка пустая.")
         return
 
     nft_name = raw_name.replace("-", " #")
 
-    await state.update_data(nft_link=url, nft_name=nft_name)
+    await state.update_data(nft_link=final_link, nft_name=nft_name)
 
     # Спрашиваем контакт
     await message.answer("Введи контакт владельца (например, @username):")
