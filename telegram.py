@@ -19,7 +19,7 @@ SOURCE_CHAT_ID = -1004341624861  # Канал с приветствием
 WELCOME_MSG_ID = 4  # Номер сообщения с приветствием
 VIP_PRICE_STARS = 15  # Цена VIP
 ADMIN_ID = 7885915159  # Твой ID для уведомлений
-MAX_PRICE = 1000000.0  # Максимальная цена (лям)
+MAX_PRICE = 1000000.0  # Максимальная цена
 
 logging.basicConfig(level=logging.INFO)
 
@@ -32,9 +32,8 @@ CURRENCIES = {
     "kzt": "KZT",
 }
 
-# Хранилище для антиспама (user_id: время последней публикации)
 user_cooldowns = {}
-COOLDOWN_TIME = 300  # 5 минут в секундах
+COOLDOWN_TIME = 300  # 5 минут
 
 
 # ================= СОСТОЯНИЯ =================
@@ -50,8 +49,16 @@ router = Router()
 
 # ================= ВСПОМОГАТЕЛЬНОЕ =================
 def build_post_text(data: dict) -> str:
+    # В зависимости от того, что бот смог распарсить, он выведет это в пост
+    model_info = data.get('model', 'Не указано')
+    bg_info = data.get('background', 'Не указано')
+    pattern_info = data.get('pattern', 'Не указано')
+
     return (
         f"🎁 <a href=\"{data['nft_link']}\">{data['nft_name']}</a>\n\n"
+        f"Модель: {model_info}\n"
+        f"Фон: {bg_info}\n"
+        f"Узор: {pattern_info}\n\n"
         f"💵 Цена: {data['price']}\n"
         f"👤 Владелец: {data['owner']}\n"
         f"💰 Валюта: {CURRENCIES[data['currency']]}\n\n"
@@ -60,24 +67,21 @@ def build_post_text(data: dict) -> str:
 
 
 async def unpin_all(bot: Bot):
-    """Снимает закреп со всех сообщений в канале"""
     try:
         chat = await bot.get_chat(CHANNEL_ID)
         if chat.pinned_message:
             await bot.unpin_chat_message(chat_id=CHANNEL_ID, message_id=chat.pinned_message.message_id)
     except Exception:
-        pass  # Если пина нет, ничего не делаем
+        pass
 
 
 # ================= СТАРТ =================
 @router.message(CommandStart())
 async def start(message: Message, state: FSMContext):
     await state.clear()
-
     kb = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="🛍 Создать лот", callback_data="start_selling")]
     ])
-
     try:
         await message.bot.copy_message(
             chat_id=message.chat.id,
@@ -92,7 +96,6 @@ async def start(message: Message, state: FSMContext):
 # ================= СОЗДАНИЕ ЛОТА =================
 @router.callback_query(F.data == "start_selling")
 async def start_selling_callback(call: CallbackQuery, state: FSMContext):
-    # Проверка антиспама
     user_id = call.from_user.id
     current_time = time.time()
 
@@ -111,7 +114,7 @@ async def start_selling_callback(call: CallbackQuery, state: FSMContext):
     await call.answer()
 
 
-# ================= ССЫЛКА =================
+# ================= ССЫЛКА + ПАРСИНГ =================
 @router.message(Form.nft_link)
 async def process_link(message: Message, state: FSMContext):
     url = message.text.strip()
@@ -120,12 +123,30 @@ async def process_link(message: Message, state: FSMContext):
         await message.answer("❌ Неверный формат. Ссылка должна начинаться с https://t.me/nft/")
         return
 
-    nft_name = url.split("/")[-1]
+    # Вытаскиваем сылку (например, PlushPepe-123)
+    raw_name = url.split("/")[-1]
+
+    # Пытаемся разбить название на части (Коллекция-Номер)
+    parts = raw_name.split("-")
+    nft_name = raw_name.replace("-", " #")
+
+    # Заглушки для модели, фона и узора (так как бот не видит картинку)
+    # Если пользователь захочет, он может ввести их вручную, но мы ставим дефолт
+    model = "Не указано"
+    background = "Не указано"
+    pattern = "Не указано"
+
     owner = f"@{message.from_user.username}" if message.from_user.username else message.from_user.first_name
 
-    await state.update_data(nft_link=url, nft_name=nft_name, owner=owner)
+    await state.update_data(
+        nft_link=url,
+        nft_name=nft_name,
+        owner=owner,
+        model=model,
+        background=background,
+        pattern=pattern
+    )
 
-    # Валюта
     kb = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="GRAM", callback_data="cur:gram"),
          InlineKeyboardButton(text="Stars", callback_data="cur:stars")],
@@ -159,36 +180,40 @@ async def process_price(message: Message, state: FSMContext):
         price_text = message.text.replace(",", ".").strip()
         price = float(price_text)
 
-        # Ограничения цены
         if price <= 0:
             await message.answer("❌ Цена должна быть больше нуля.")
             return
         if price > MAX_PRICE:
-            await message.answer(f"❌ Максимальная цена — {MAX_PRICE}. Введи число поменьше.")
+            await message.answer(f"❌ Максимальная цена — {MAX_PRICE}.")
             return
 
-        # Красивое форматирование (если 19.00, то будет 19)
         formatted_price = int(price) if price.is_integer() else round(price, 2)
 
     except ValueError:
-        await message.answer("❌ Введи только число (например 19.99 или 500).")
+        await message.answer("❌ Введи только число.")
         return
 
     await state.update_data(price=formatted_price)
 
     data = await state.get_data()
+
     preview = (
         f"Проверь лот:\n\n"
         f"🎁 {data['nft_name']} ({data['nft_link']})\n"
+        f"Модель: {data['model']}\n"
+        f"Фон: {data['background']}\n"
+        f"Узор: {data['pattern']}\n\n"
         f"💵 Цена: {data['price']}\n"
         f"👤 Владелец: {data['owner']}\n"
         f"💰 Валюта: {CURRENCIES[data['currency']]}"
     )
+
     kb = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="✅ Подтвердить", callback_data="choose_type")],
         [InlineKeyboardButton(text="❌ Отмена", callback_data="cancel")]
     ])
     await message.answer(preview, reply_markup=kb)
+    await state.set_state(Form.choose_type)
 
 
 # ================= ВЫБОР ТИПА =================
@@ -198,8 +223,8 @@ async def choose_post_type(call: CallbackQuery, state: FSMContext):
         [InlineKeyboardButton(text="📄 Обычный", callback_data="type:regular")],
         [InlineKeyboardButton(text=f"⭐ VIP ({VIP_PRICE_STARS} Stars)", callback_data="type:vip")]
     ])
+    # ТУТ БЫЛА ОШИБКА - теперь мы не теряем данные при смене состояния
     await call.message.edit_text("Как опубликовать?", reply_markup=kb)
-    await state.set_state(Form.choose_type)
     await call.answer()
 
 
@@ -208,11 +233,14 @@ async def choose_post_type(call: CallbackQuery, state: FSMContext):
 async def publish_regular(call: CallbackQuery, state: FSMContext, bot: Bot):
     data = await state.get_data()
 
-    # Запоминаем время публикации для антиспама
+    if not data:
+        await call.message.edit_text("❌ Данные потеряны. Начни заново: /start")
+        return
+
     user_cooldowns[call.from_user.id] = time.time()
 
     try:
-        await unpin_all(bot)  # Снимаем старый пин
+        await unpin_all(bot)
         await bot.send_message(chat_id=CHANNEL_ID, text=build_post_text(data), parse_mode="HTML")
         await call.message.edit_text("✅ Опубликовано.")
     except Exception as e:
@@ -224,6 +252,12 @@ async def publish_regular(call: CallbackQuery, state: FSMContext, bot: Bot):
 # ================= VIP ОПЛАТА =================
 @router.callback_query(F.data == "type:vip")
 async def send_vip_invoice(call: CallbackQuery, state: FSMContext, bot: Bot):
+    data = await state.get_data()
+
+    if not data:
+        await call.message.edit_text("❌ Данные потеряны. Начни заново: /start")
+        return
+
     await state.update_data(is_vip=True)
     prices = [LabeledPrice(label="VIP", amount=VIP_PRICE_STARS)]
     try:
@@ -254,16 +288,18 @@ async def on_vip_paid(message: Message, state: FSMContext, bot: Bot):
     if not data.get("is_vip"):
         return
 
-    # Запоминаем время публикации для антиспама
+    if not data:
+        await message.answer("❌ Данные потеряны. Начни заново: /start")
+        return
+
     user_cooldowns[message.from_user.id] = time.time()
 
     try:
-        await unpin_all(bot)  # Снимаем старый пин
+        await unpin_all(bot)
         sent = await bot.send_message(chat_id=CHANNEL_ID, text=build_post_text(data), parse_mode="HTML")
         await bot.pin_chat_message(chat_id=CHANNEL_ID, message_id=sent.message_id, disable_notification=True)
         await message.answer("✅ VIP-пост опубликован и закреплен!")
 
-        # Уведомление админу
         admin_text = (
             f"💸 <b>Оплачен VIP-пост!</b>\n\n"
             f"Пользователь: {data['owner']} (ID: {message.from_user.id})\n"
@@ -273,7 +309,7 @@ async def on_vip_paid(message: Message, state: FSMContext, bot: Bot):
         try:
             await bot.send_message(ADMIN_ID, admin_text, parse_mode="HTML")
         except:
-            pass  # Если админ заблокировал бота, не падаем с ошибкой
+            pass
 
     except Exception as e:
         await message.answer(f"❌ Оплата прошла, но ошибка публикации: {e}")
@@ -293,7 +329,7 @@ async def main():
     bot = Bot(token=BOT_TOKEN)
     dp = Dispatcher()
     dp.include_router(router)
-    print("Бот запущен с защитами!")
+    print("Бот запущен!")
     await dp.start_polling(bot)
 
 
